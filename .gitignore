@@ -1,0 +1,24 @@
+# Terraform state
+*.tfstate
+*.tfstate.backup
+
+# Terraform init で生成されるディレクトリ
+.terraform/
+
+# クラッシュログ
+crash.log
+crash.*.log
+
+# 機密値が入る可能性があるため（必要に応じてコメントアウト）
+# *.tfvars
+
+# tfvarsのオーバーライドファイル（ローカル作業用）
+*.tfvars.json
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# CLI設定ファイル
+.terraformrc
+terraform.rc
