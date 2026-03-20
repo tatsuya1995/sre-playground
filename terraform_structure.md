@@ -1,4 +1,4 @@
-# Terraform SRE Portfolio - Directory Structure
+# Terraform SRE - Directory Structure
 
 | scope | path | description |
 | --- | --- | --- |
