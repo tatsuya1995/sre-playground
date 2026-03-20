@@ -26,6 +26,7 @@ class FeedController extends Controller
 
         $feed = Feed::create($validated);
 
+        // ジョブをSQSキューへ投げる
         FetchFeedJob::dispatch($feed);
 
         return response()->json($feed, 201);
