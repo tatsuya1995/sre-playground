@@ -5,34 +5,54 @@ RSSフィードから記事を収集するアプリケーション。
 ## アーキテクチャ
 
 ```
-[Client]
-   │
-   ▼
-[nginx :8080]
-   │
-   ▼
-[app: PHP-FPM]  ──── POST /api/feeds ────▶ [SQS: localstack]
-   │                                               │
-   │                                               ▼
-[MySQL]                                    [worker: queue:work]
-[Redis]                                            │
-                                                   ▼
-                                           FetchFeedJob::handle()
-                                                   │
-                                                   ▼
-                                           [MySQL: articles]
+                        Docker Network
+  ┌─────────────────────────────────────────────────────────┐
+  │                                                         │
+  │  [Client]                                               │
+  │     │ :8080                                             │
+  │     ▼                                                   │
+  │  ┌─────────────────┐                                    │
+  │  │  nginx          │  :80 (内部)                        │
+  │  └─────────────────┘──────────────────┐                 │
+  │                                       ▼                 │
+  │  ┌─────────────────┐  MySQL    ┌─────────────────┐      │
+  │  │  mysql          │◀──────────│  app            │      │
+  │  │  :3306          │  Redis    │                 │      │
+  │  └─────────────────┘  ┌────────│                 │      │
+  │                        │        └────────┬────────┘      │
+  │  ┌─────────────────┐  │                │ SQS送信        │
+  │  │  redis          │◀─┘        ┌────────▼────────┐      │
+  │  │  :6379          │           │  localstack     │      │
+  │  └─────────────────┘           │  :4566          │      │
+  │                                └────────┬────────┘      │
+  │                                         │ SQSポーリング  │
+  │  ┌─────────────────┐           ┌────────▼────────┐      │
+  │  │  mysql          │◀──────────│  worker         │      │
+  │  │  (articlesへ保存)│  MySQL    │  queue:work sqs │      │
+  │  └─────────────────┘           └─────────────────┘      │
+  └─────────────────────────────────────────────────────────┘
+```
+
+### コンテナの依存関係
+
+```
+nginx ──depends_on──▶ app
+app   ──depends_on──▶ mysql (healthy)
+                   ──▶ redis
+                   ──▶ localstack
+worker──depends_on──▶ app
 ```
 
 ## サービス構成
 
 | サービス | イメージ | 役割 |
 |---|---|---|
-| app | PHP 8.4-fpm-alpine | Laravel API サーバー (PHP-FPM) |
-| worker | PHP 8.4-fpm-alpine | SQS キューワーカー |
-| nginx | nginx:1.25-alpine | リバースプロキシ (:8080) |
-| mysql | mysql:8.0 | データベース |
-| redis | redis:7-alpine | セッション・キャッシュ |
-| localstack | localstack:3 | AWS SQS エミュレーター |
+| app | PHP-FPM | Laravel API サーバー |
+| worker | PHP-FPM | SQS キューワーカー |
+| nginx | nginx | リバースプロキシ (:8080) |
+| mysql | mysql | データベース |
+| redis | redis | セッション・キャッシュ |
+| localstack | localstack | AWS SQS エミュレーター |
 
 ## API エンドポイント
 
@@ -86,7 +106,14 @@ curl -X POST http://localhost:8080/api/feeds \
                   ├─ RSS/Atom XML をパース
                   ├─ 記事を articles テーブルに保存 (firstOrCreate)
                   └─ feeds.last_fetched_at を更新
+
+3. php artisan feeds:fetch（バッチ実行）
+   └─ FetchFeedsCommand::handle()
+        └─ 全フィードをループして FetchFeedJob を SQS に送信
+             └─ 以降は 2. と同じ流れ
 ```
+
+本番では EventBridge（cron）が `php artisan feeds:fetch` をトリガーし、ECS タスクとして起動する。
 
 ## DB スキーマ
 
@@ -130,6 +157,28 @@ docker-compose exec app php artisan migrate
 - **キュー名**: `articles`
 - **DLQ**: `articles-dlq`（3回失敗でデッドレターキューへ）
 - **リトライ**: 最大3回 (`FetchFeedJob::$tries = 3`)
+
+### キューの確認コマンド
+
+```bash
+# キュー一覧
+docker-compose exec localstack awslocal sqs list-queues
+
+# メッセージ数の確認
+docker-compose exec localstack awslocal sqs get-queue-attributes \
+  --queue-url http://sqs.us-east-1.localhost.localstack.cloud:4566/000000000000/articles \
+  --attribute-names ApproximateNumberOfMessages ApproximateNumberOfMessagesNotVisible
+
+# DLQ のメッセージ数
+docker-compose exec localstack awslocal sqs get-queue-attributes \
+  --queue-url http://sqs.us-east-1.localhost.localstack.cloud:4566/000000000000/articles-dlq \
+  --attribute-names ApproximateNumberOfMessages
+```
+
+| 属性 | 説明 |
+|---|---|
+| `ApproximateNumberOfMessages` | 未処理のメッセージ数 |
+| `ApproximateNumberOfMessagesNotVisible` | Worker が処理中のメッセージ数 |
 
 ## 対応 RSS フォーマット
 
