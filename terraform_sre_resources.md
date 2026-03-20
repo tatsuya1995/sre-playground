@@ -1,4 +1,4 @@
-# Terraform SRE Portfolio - Resource List
+# Terraform SRE - Resource List
 
 | category | resource_name | description |
 | --- | --- | --- |
