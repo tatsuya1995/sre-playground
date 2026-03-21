@@ -13,8 +13,7 @@ output "private_subnet_ids" {
   value       = aws_subnet.private[*].id
 }
 
-# コストの観点から一時非活性
-# output "nat_gateway_id" {
-#   description = "NAT Gateway ID"
-#   value       = aws_nat_gateway.main.id
-# }
+output "nat_gateway_id" {
+  description = "NAT Gateway ID"
+  value       = aws_nat_gateway.main.id
+}

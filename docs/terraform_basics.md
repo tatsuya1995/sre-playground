@@ -173,6 +173,49 @@ S3バケットとDynamoDBテーブルはTerraform管理外で手動で先に作�
 
 ---
 
+## terraform init が必要なタイミング
+
+`terraform init` は毎回実行する必要はない。以下のタイミングでのみ必要。
+
+| タイミング | 理由 |
+|---|---|
+| 初回セットアップ時 | プロバイダー（AWS等）をダウンロードする |
+| 新しいモジュールを追加したとき | モジュールの参照を `.terraform/` に登録する |
+| `backend` の設定を変えたとき | stateの保存先が変わるため再初期化が必要 |
+| プロバイダーのバージョンを変えたとき | 新しいバージョンをダウンロードする |
+| 別のマシンやCIで初めて実行するとき | `.terraform/` はgitignoreされているため |
+
+```bash
+# 新しいモジュールを追加した後は init が必要
+module "sg" {
+  source = "../../modules/sg"  # ← これを追加したら terraform init
+  ...
+}
+```
+
+`plan` や `apply` だけの場合は `init` 不要。
+
+---
+
+## -auto-approve について
+
+`terraform apply` や `terraform destroy` は通常 `yes/no` の確認を求めるが、`-auto-approve` をつけると確認をスキップして自動実行する。
+
+```bash
+terraform apply -auto-approve   # 確認なしで即apply
+terraform destroy -auto-approve # 確認なしで即destroy
+```
+
+**使い所**
+- CI/CDパイプラインでの自動デプロイ
+- スクリプト内での実行
+
+**注意点**
+- 本番環境では使わない。確認なしで意図しないリソースが削除・変更されるリスクがある
+- 手動実行時は通常通り `yes/no` で確認する習慣をつける
+
+---
+
 ## .gitignore で除外すべきもの
 
 ```gitignore
@@ -189,3 +232,82 @@ crash.log
 
 - `.terraform.lock.hcl` はコミットする
 - `terraform.tfvars` に機密値（DBパスワードなど）を書いた場合はgitignoreに追加する
+
+---
+
+## モジュール間の値の受け渡し
+
+あるモジュールのoutputを別モジュールのinputに渡すパターン。
+
+```hcl
+# SQSモジュールが作ったキュー名をECSモジュールに渡す例
+module "sqs" {
+  source     = "../../modules/sqs"
+  queue_name = var.sqs_queue  # "articles"
+}
+
+locals {
+  # queue_url: https://sqs.ap-northeast-1.amazonaws.com/123456789/sre-playground-prod-articles
+  # queue_name: sre-playground-prod-articles
+  # prefixはqueue_urlからqueue_nameを除いた部分
+  sqs_prefix = trimsuffix(module.sqs.queue_url, "/${module.sqs.queue_name}")
+}
+
+module "ecs" {
+  sqs_prefix = local.sqs_prefix
+  sqs_queue  = module.sqs.queue_name  # "sre-playground-prod-articles"
+}
+```
+
+**ポイント**: `var.sqs_queue`（"articles"）ではなく `module.sqs.queue_name`（"sre-playground-prod-articles"）を使う。
+TerraformのSQSリソースはキュー名を `{project}-{env}-{name}` で作成するため、実際の名前と `var.sqs_queue` はズレる。
+
+---
+
+## ECSデプロイ後の確認手順
+
+### 1. タスクが新しいイメージを使っているか確認
+```bash
+TASK_ARN=$(aws ecs list-tasks --cluster <cluster> --service-name <service> \
+  --region ap-northeast-1 --query 'taskArns[0]' --output text)
+
+aws ecs describe-tasks --cluster <cluster> --tasks $TASK_ARN \
+  --region ap-northeast-1 \
+  --query 'tasks[0].containers[0].imageDigest' --output text
+```
+
+### 2. タスク定義の環境変数を確認
+```bash
+aws ecs describe-task-definition \
+  --task-definition <family>:<revision> \
+  --region ap-northeast-1 \
+  --query 'taskDefinition.containerDefinitions[?name==`app`].environment'
+```
+
+### 3. ECSサービスのイベント確認
+```bash
+aws ecs describe-services \
+  --cluster <cluster> --services <service> \
+  --region ap-northeast-1 \
+  --query 'services[0].events[:5]'
+```
+
+---
+
+## ECSコンテナのログをCloudWatchで見る
+
+Laravelのデフォルトログはファイル（`storage/logs/laravel.log`）に書き出されるため、ECSでは見えない。
+`LOG_CHANNEL=stderr` を設定するとstderrに出力され、CloudWatchで確認できる。
+
+```hcl
+# ECSタスク定義の環境変数に追加
+{ name = "LOG_CHANNEL", value = "stderr" }
+```
+
+```bash
+# CloudWatchでworkerのログを確認
+aws logs tail /ecs/<project>-<env> \
+  --region ap-northeast-1 \
+  --log-stream-name-prefix worker/worker \
+  --follow
+```

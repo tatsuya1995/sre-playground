@@ -186,3 +186,121 @@ docker-compose exec localstack awslocal sqs get-queue-attributes \
 |---|---|
 | RSS 2.0 | `<link>` テキストノード |
 | Atom | `<link href="...">` 属性 |
+
+---
+
+## AWS インフラ構成
+
+```
+Internet
+   │
+   ▼
+[ALB] :80
+   │
+   ▼ (HTTP)
+[ECS Fargate - app]
+  ├─ nginx コンテナ :80 （リバースプロキシ）
+  └─ app コンテナ :9000 （PHP-FPM）
+       ├─ [RDS MySQL]
+       ├─ [ElastiCache Redis]
+       └─ [SQS] ─── [ECS Fargate - worker]
+                          └─ php artisan queue:work sqs
+
+[EventBridge Scheduler] ─── 12時間ごと ───▶ [ECS Fargate - batch]
+                                                  └─ php artisan feeds:fetch
+```
+
+### AWSリソース一覧
+
+| リソース | 用途 |
+|---|---|
+| ECS Fargate (app) | nginx + PHP-FPM。ALBからトラフィックを受ける |
+| ECS Fargate (worker) | SQSをポーリングしてジョブを処理 |
+| ECS Fargate (batch) | feeds:fetch を単発実行（EventBridgeからトリガー） |
+| ALB | HTTP :80 → ECS app へ転送 |
+| ECR (app / nginx) | コンテナイメージ保存 |
+| RDS MySQL | 記事・フィードデータ |
+| ElastiCache Redis | セッション・キャッシュ |
+| SQS | ジョブキュー（キュー名: `{project}-{env}-articles`） |
+| EventBridge Scheduler | 12時間ごとにbatchタスクを起動 |
+| Secrets Manager | DBパスワード管理 |
+| NAT Gateway | プライベートサブネットからAWSサービスへの通信 |
+
+---
+
+## ECRへのイメージpush手順
+
+```bash
+# ECRにログイン
+aws ecr get-login-password --region ap-northeast-1 | \
+  docker login --username AWS --password-stdin <account_id>.dkr.ecr.ap-northeast-1.amazonaws.com
+
+# appイメージをビルド（Apple SiliconはAMD64を指定）
+docker build --platform linux/amd64 -f Dockerfile \
+  -t <ecr_app_repository_url>:latest .
+
+# nginxイメージをビルド
+docker build --platform linux/amd64 -f docker/nginx/Dockerfile \
+  -t <ecr_nginx_repository_url>:latest .
+
+# push
+docker push <ecr_app_repository_url>:latest
+docker push <ecr_nginx_repository_url>:latest
+
+# ECSサービスを更新
+aws ecs update-service \
+  --cluster sre-playground-prod \
+  --service sre-playground-prod-app \
+  --force-new-deployment \
+  --region ap-northeast-1
+```
+
+`terraform output` でECRのURLを確認できる。
+
+---
+
+## ECSでマイグレーションを実行
+
+```bash
+aws ecs run-task \
+  --cluster sre-playground-prod \
+  --task-definition sre-playground-prod-app \
+  --launch-type FARGATE \
+  --network-configuration "awsvpcConfiguration={subnets=[<private_subnet_id>],securityGroups=[<app_sg_id>],assignPublicIp=DISABLED}" \
+  --overrides '{"containerOverrides":[{"name":"app","command":["php","artisan","migrate","--force"]}]}' \
+  --region ap-northeast-1
+```
+
+---
+
+## ECS運用上の注意点
+
+### SQSキュー名
+TerraformのSQSモジュールは `{project}-{env}-{queue_name}` 形式でキューを作成する。
+ECSの `SQS_QUEUE` 環境変数にはこの完全なキュー名が自動的に設定される。
+`envs/prod/main.tf` で `module.sqs.queue_name` を参照して渡している。
+
+### .envの注意
+`.env` に `SQS_ENDPOINT` や `AWS_ACCESS_KEY_ID=test` が残っていると、ECSでlocalstackに接続しようとして失敗する。
+ECSではIAMタスクロールで認証するため、これらは空にしておく。
+
+```env
+# ECS環境では空にする
+AWS_ACCESS_KEY_ID=
+AWS_SECRET_ACCESS_KEY=
+SQS_ENDPOINT=
+```
+
+### CloudWatchでLaravelログを確認する
+ECSコンテナのstderrがCloudWatchに流れる。Laravelのログを見るにはworkerタスク定義に以下を追加。
+
+```
+LOG_CHANNEL=stderr
+```
+
+### Apple Silicon (ARM64) でのビルド
+ローカルがApple SiliconのMacの場合、ECS（AMD64）向けに `--platform linux/amd64` が必要。
+
+```bash
+docker build --platform linux/amd64 ...
+```
