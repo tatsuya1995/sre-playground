@@ -9,6 +9,7 @@ on:
 
 env:
   AWS_REGION: ap-northeast-1
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   ECR_APP_REPOSITORY: sre-playground-prod-app
   ECR_NGINX_REPOSITORY: sre-playground-prod-nginx
   ECS_CLUSTER: sre-playground-prod
@@ -81,6 +82,7 @@ jobs:
             --region $AWS_REGION
 
       - name: Wait for deployment to complete
+        timeout-minutes: 15
         run: |
           aws ecs wait services-stable \
             --cluster $ECS_CLUSTER \
