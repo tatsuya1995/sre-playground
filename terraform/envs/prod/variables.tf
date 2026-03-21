@@ -27,3 +27,25 @@ variable "availability_zones" {
   description = "Availability zones"
   type        = list(string)
 }
+
+variable "db_name" {
+  type = string
+}
+
+variable "db_username" {
+  type = string
+}
+
+variable "db_password_secret_id" {
+  type = string
+}
+
+variable "app_key" {
+  type      = string
+  sensitive = true
+}
+
+variable "sqs_queue" {
+  type    = string
+  default = "articles"
+}
