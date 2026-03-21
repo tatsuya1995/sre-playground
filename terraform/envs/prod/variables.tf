@@ -49,3 +49,8 @@ variable "sqs_queue" {
   type    = string
   default = "articles"
 }
+
+variable "github_repo" {
+  description = "GitHub repository (e.g. owner/repo)"
+  type        = string
+}

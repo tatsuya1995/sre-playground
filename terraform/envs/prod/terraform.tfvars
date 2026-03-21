@@ -11,4 +11,5 @@ db_username           = "laravel"
 db_password_secret_id = "sre-playground/prod/db_password"
 
 app_key    = "base64:yHUVxqbhVVjVcEbrZR76kDQXfuYOwf1CtNtbET1olvY="
-sqs_queue = "articles"
+sqs_queue   = "articles"
+github_repo = "tatsuya1995/sre-playground"

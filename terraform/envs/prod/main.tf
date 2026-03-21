@@ -116,6 +116,15 @@ module "ecs" {
   sqs_queue              = module.sqs.queue_name
 }
 
+module "iam_github_actions" {
+  source = "../../modules/iam-github-actions"
+
+  project             = var.project
+  env                 = var.env
+  github_repo         = var.github_repo
+  ecr_repository_arns = module.ecr.repository_arns
+}
+
 module "eventbridge" {
   source = "../../modules/eventbridge"
 
