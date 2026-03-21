@@ -25,3 +25,8 @@ output "redis_endpoint" {
 output "redis_port" {
   value = module.redis.port
 }
+
+output "github_actions_role_arn" {
+  description = "GitHub ActionsのOIDC認証用IAMロールARN。GitHub Secretsに AWS_ROLE_ARN として登録する"
+  value       = module.iam_github_actions.role_arn
+}
