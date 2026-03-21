@@ -1,0 +1,88 @@
+name: Deploy to ECS
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "app/**"
+
+env:
+  AWS_REGION: ap-northeast-1
+  ECR_APP_REPOSITORY: sre-playground-prod-app
+  ECR_NGINX_REPOSITORY: sre-playground-prod-nginx
+  ECS_CLUSTER: sre-playground-prod
+  ECS_SERVICE_APP: sre-playground-prod-app
+  ECS_SERVICE_WORKER: sre-playground-prod-worker
+
+jobs:
+  deploy:
+    name: Build and Deploy
+    runs-on: ubuntu-latest
+
+    permissions:
+      id-token: write  # OIDCトークン取得に必要
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push app image
+        working-directory: app
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          docker build \
+            --platform linux/amd64 \
+            -f Dockerfile \
+            -t $ECR_REGISTRY/$ECR_APP_REPOSITORY:latest \
+            -t $ECR_REGISTRY/$ECR_APP_REPOSITORY:${{ github.sha }} \
+            .
+          docker push $ECR_REGISTRY/$ECR_APP_REPOSITORY:latest
+          docker push $ECR_REGISTRY/$ECR_APP_REPOSITORY:${{ github.sha }}
+
+      - name: Build and push nginx image
+        working-directory: app
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          docker build \
+            --platform linux/amd64 \
+            -f docker/nginx/Dockerfile \
+            -t $ECR_REGISTRY/$ECR_NGINX_REPOSITORY:latest \
+            -t $ECR_REGISTRY/$ECR_NGINX_REPOSITORY:${{ github.sha }} \
+            .
+          docker push $ECR_REGISTRY/$ECR_NGINX_REPOSITORY:latest
+          docker push $ECR_REGISTRY/$ECR_NGINX_REPOSITORY:${{ github.sha }}
+
+      - name: Deploy to ECS
+        run: |
+          aws ecs update-service \
+            --cluster $ECS_CLUSTER \
+            --service $ECS_SERVICE_APP \
+            --force-new-deployment \
+            --region $AWS_REGION
+
+          aws ecs update-service \
+            --cluster $ECS_CLUSTER \
+            --service $ECS_SERVICE_WORKER \
+            --force-new-deployment \
+            --region $AWS_REGION
+
+      - name: Wait for deployment to complete
+        run: |
+          aws ecs wait services-stable \
+            --cluster $ECS_CLUSTER \
+            --services $ECS_SERVICE_APP $ECS_SERVICE_WORKER \
+            --region $AWS_REGION
