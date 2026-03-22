@@ -82,6 +82,10 @@ data "aws_secretsmanager_secret" "db_password" {
   name = var.db_password_secret_id
 }
 
+data "aws_secretsmanager_secret" "datadog_api_key" {
+  name = var.datadog_api_key_secret_id
+}
+
 module "sqs" {
   source = "../../modules/sqs"
 
@@ -110,7 +114,8 @@ module "ecs" {
   db_host                = module.rds.endpoint
   db_name                = var.db_name
   db_username            = var.db_username
-  db_password_secret_arn = data.aws_secretsmanager_secret.db_password.arn
+  db_password_secret_arn     = data.aws_secretsmanager_secret.db_password.arn
+  datadog_api_key_secret_arn = data.aws_secretsmanager_secret.datadog_api_key.arn
   redis_host             = module.redis.endpoint
   sqs_prefix             = local.sqs_prefix
   sqs_queue              = module.sqs.queue_name

@@ -10,6 +10,8 @@ db_name               = "sre_playground"
 db_username           = "laravel"
 db_password_secret_id = "sre-playground/prod/db_password"
 
+datadog_api_key_secret_id = "sre-playground/prod/datadog_api_key"
+
 app_key    = "base64:yHUVxqbhVVjVcEbrZR76kDQXfuYOwf1CtNtbET1olvY="
 sqs_queue   = "articles"
 github_repo = "tatsuya1995/sre-playground"

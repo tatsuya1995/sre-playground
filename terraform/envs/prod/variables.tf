@@ -54,3 +54,8 @@ variable "github_repo" {
   description = "GitHub repository (e.g. owner/repo)"
   type        = string
 }
+
+variable "datadog_api_key_secret_id" {
+  description = "Secrets Manager secret ID for Datadog API Key"
+  type        = string
+}

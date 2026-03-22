@@ -28,7 +28,7 @@ resource "aws_iam_role_policy_attachment" "ecs_task_execution" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
 
-# Secrets ManagerからDBパスワードを取得する権限
+# Secrets ManagerからDBパスワード・Datadog APIキーを取得する権限
 resource "aws_iam_role_policy" "ecs_task_execution_secrets" {
   name = "secrets-manager-access"
   role = aws_iam_role.ecs_task_execution.id
@@ -38,7 +38,7 @@ resource "aws_iam_role_policy" "ecs_task_execution_secrets" {
     Statement = [{
       Effect   = "Allow"
       Action   = ["secretsmanager:GetSecretValue"]
-      Resource = var.db_password_secret_arn
+      Resource = [var.db_password_secret_arn, var.datadog_api_key_secret_arn]
     }]
   })
 }
@@ -116,6 +116,10 @@ resource "aws_ecs_task_definition" "app" {
         { name = "SQS_PREFIX", value = var.sqs_prefix },
         { name = "SQS_QUEUE", value = var.sqs_queue },
         { name = "AWS_DEFAULT_REGION", value = var.aws_region },
+        { name = "DD_AGENT_HOST", value = "localhost" },
+        { name = "DD_TRACE_AGENT_PORT", value = "8126" },
+        { name = "DD_LOGS_INJECTION", value = "true" },
+        { name = "DD_TRACE_LARAVEL_ENABLED", value = "true" },
       ]
       secrets = [
         { name = "DB_PASSWORD", valueFrom = var.db_password_secret_arn },
@@ -126,6 +130,36 @@ resource "aws_ecs_task_definition" "app" {
           awslogs-group         = aws_cloudwatch_log_group.ecs.name
           awslogs-region        = var.aws_region
           awslogs-stream-prefix = "app"
+        }
+      }
+    },
+    {
+      name      = "datadog-agent"
+      image     = "public.ecr.aws/datadog/agent:7"
+      essential = false
+      environment = [
+        { name = "DD_SITE",                        value = "datadoghq.com" },
+        { name = "ECS_FARGATE",                    value = "true" },
+        { name = "DD_APM_ENABLED",                 value = "true" },
+        { name = "DD_DOGSTATSD_NON_LOCAL_TRAFFIC", value = "true" },
+        { name = "DD_LOGS_ENABLED",                value = "false" },
+        { name = "DD_PROCESS_AGENT_ENABLED",       value = "false" },
+        { name = "DD_ENV",                         value = var.env },
+        { name = "DD_SERVICE",                     value = "${var.project}-app" },
+      ]
+      secrets = [
+        { name = "DD_API_KEY", valueFrom = var.datadog_api_key_secret_arn },
+      ]
+      portMappings = [
+        { containerPort = 8126, protocol = "tcp" },
+        { containerPort = 8125, protocol = "udp" },
+      ]
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          awslogs-group         = aws_cloudwatch_log_group.ecs.name
+          awslogs-region        = var.aws_region
+          awslogs-stream-prefix = "datadog-agent"
         }
       }
     }
@@ -162,6 +196,11 @@ resource "aws_ecs_task_definition" "worker" {
         { name = "SQS_QUEUE", value = var.sqs_queue },
         { name = "AWS_DEFAULT_REGION", value = var.aws_region },
         { name = "LOG_CHANNEL", value = "stderr" },
+        { name = "DD_AGENT_HOST", value = "localhost" },
+        { name = "DD_TRACE_AGENT_PORT", value = "8126" },
+        { name = "DD_LOGS_INJECTION", value = "true" },
+        { name = "DD_TRACE_LARAVEL_ENABLED", value = "true" },
+        { name = "DD_TRACE_QUEUE_PROPAGATION_ENABLED", value = "true" },
       ]
       secrets = [
         { name = "DB_PASSWORD", valueFrom = var.db_password_secret_arn },
@@ -172,6 +211,36 @@ resource "aws_ecs_task_definition" "worker" {
           awslogs-group         = aws_cloudwatch_log_group.ecs.name
           awslogs-region        = var.aws_region
           awslogs-stream-prefix = "worker"
+        }
+      }
+    },
+    {
+      name      = "datadog-agent"
+      image     = "public.ecr.aws/datadog/agent:7"
+      essential = false
+      environment = [
+        { name = "DD_SITE",                        value = "datadoghq.com" },
+        { name = "ECS_FARGATE",                    value = "true" },
+        { name = "DD_APM_ENABLED",                 value = "true" },
+        { name = "DD_DOGSTATSD_NON_LOCAL_TRAFFIC", value = "true" },
+        { name = "DD_LOGS_ENABLED",                value = "false" },
+        { name = "DD_PROCESS_AGENT_ENABLED",       value = "false" },
+        { name = "DD_ENV",                         value = var.env },
+        { name = "DD_SERVICE",                     value = "${var.project}-worker" },
+      ]
+      secrets = [
+        { name = "DD_API_KEY", valueFrom = var.datadog_api_key_secret_arn },
+      ]
+      portMappings = [
+        { containerPort = 8126, protocol = "tcp" },
+        { containerPort = 8125, protocol = "udp" },
+      ]
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          awslogs-group         = aws_cloudwatch_log_group.ecs.name
+          awslogs-region        = var.aws_region
+          awslogs-stream-prefix = "datadog-agent"
         }
       }
     }
@@ -207,6 +276,11 @@ resource "aws_ecs_task_definition" "batch" {
         { name = "SQS_PREFIX", value = var.sqs_prefix },
         { name = "SQS_QUEUE", value = var.sqs_queue },
         { name = "AWS_DEFAULT_REGION", value = var.aws_region },
+        { name = "DD_AGENT_HOST", value = "localhost" },
+        { name = "DD_TRACE_AGENT_PORT", value = "8126" },
+        { name = "DD_LOGS_INJECTION", value = "true" },
+        { name = "DD_TRACE_LARAVEL_ENABLED", value = "true" },
+        { name = "DD_TRACE_CLI_ENABLED", value = "true" },
       ]
       secrets = [
         { name = "DB_PASSWORD", valueFrom = var.db_password_secret_arn },
@@ -217,6 +291,36 @@ resource "aws_ecs_task_definition" "batch" {
           awslogs-group         = aws_cloudwatch_log_group.ecs.name
           awslogs-region        = var.aws_region
           awslogs-stream-prefix = "batch"
+        }
+      }
+    },
+    {
+      name      = "datadog-agent"
+      image     = "public.ecr.aws/datadog/agent:7"
+      essential = false
+      environment = [
+        { name = "DD_SITE",                        value = "datadoghq.com" },
+        { name = "ECS_FARGATE",                    value = "true" },
+        { name = "DD_APM_ENABLED",                 value = "true" },
+        { name = "DD_DOGSTATSD_NON_LOCAL_TRAFFIC", value = "true" },
+        { name = "DD_LOGS_ENABLED",                value = "false" },
+        { name = "DD_PROCESS_AGENT_ENABLED",       value = "false" },
+        { name = "DD_ENV",                         value = var.env },
+        { name = "DD_SERVICE",                     value = "${var.project}-batch" },
+      ]
+      secrets = [
+        { name = "DD_API_KEY", valueFrom = var.datadog_api_key_secret_arn },
+      ]
+      portMappings = [
+        { containerPort = 8126, protocol = "tcp" },
+        { containerPort = 8125, protocol = "udp" },
+      ]
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          awslogs-group         = aws_cloudwatch_log_group.ecs.name
+          awslogs-region        = var.aws_region
+          awslogs-stream-prefix = "datadog-agent"
         }
       }
     }
