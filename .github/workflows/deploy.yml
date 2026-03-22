@@ -81,10 +81,10 @@ jobs:
             --force-new-deployment \
             --region $AWS_REGION
 
-      - name: Wait for deployment to complete
-        timeout-minutes: 15
-        run: |
-          aws ecs wait services-stable \
-            --cluster $ECS_CLUSTER \
-            --services $ECS_SERVICE_APP $ECS_SERVICE_WORKER \
-            --region $AWS_REGION
+      # - name: Wait for deployment to complete
+      #   timeout-minutes: 10
+      #   run: |
+      #     aws ecs wait services-stable \
+      #       --cluster $ECS_CLUSTER \
+      #       --services $ECS_SERVICE_APP $ECS_SERVICE_WORKER \
+      #       --region $AWS_REGION

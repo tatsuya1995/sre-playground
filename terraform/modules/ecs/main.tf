@@ -106,6 +106,7 @@ resource "aws_ecs_task_definition" "app" {
       environment = [
         { name = "APP_ENV", value = "production" },
         { name = "APP_KEY", value = var.app_key },
+        { name = "DB_CONNECTION", value = "mysql" },
         { name = "DB_HOST", value = var.db_host },
         { name = "DB_DATABASE", value = var.db_name },
         { name = "DB_USERNAME", value = var.db_username },
@@ -149,6 +150,7 @@ resource "aws_ecs_task_definition" "worker" {
       environment = [
         { name = "APP_ENV", value = "production" },
         { name = "APP_KEY", value = var.app_key },
+        { name = "DB_CONNECTION", value = "mysql" },
         { name = "DB_HOST", value = var.db_host },
         { name = "DB_DATABASE", value = var.db_name },
         { name = "DB_USERNAME", value = var.db_username },
@@ -193,6 +195,7 @@ resource "aws_ecs_task_definition" "batch" {
       environment = [
         { name = "APP_ENV", value = "production" },
         { name = "APP_KEY", value = var.app_key },
+        { name = "DB_CONNECTION", value = "mysql" },
         { name = "DB_HOST", value = var.db_host },
         { name = "DB_DATABASE", value = var.db_name },
         { name = "DB_USERNAME", value = var.db_username },
