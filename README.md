@@ -1,6 +1,6 @@
 ## システム概要
 
-RSS フィードから記事を自動収集する **フィードアグリゲーター**。
+RSS フィードから記事を自動収集する **フィードアグリゲーター**。  
 Laravel + ECS Fargate で構成され、SQS を介した非同期ジョブ処理と EventBridge による定期バッチ実行を組み合わせたサーバーレス志向のアーキテクチャ。
 
 ```
@@ -8,7 +8,7 @@ Laravel + ECS Fargate で構成され、SQS を介した非同期ジョブ処理
                                ↑
                EventBridge → ECS batch（定期実行）
 ```
-![alt text](../terraform/infra.svg)
+![alt text](terraform/infra.svg)
 > 構成図は `terraform/infra.drawio` に管理。`.mcp.json` で draw.io MCP サーバーが設定されており、Claude Code から図の作成・編集が可能。
 
 ---
@@ -16,7 +16,7 @@ Laravel + ECS Fargate で構成され、SQS を介した非同期ジョブ処理
 ## アーキテクチャのポイント
 
 ### 1. 非同期ジョブ処理（SQS + Worker）
-`POST /api/feeds` はフィードを DB に登録した直後に SQS へジョブを投げてレスポンスを返す。
+`POST /api/feeds` はフィードを DB に登録した直後に SQS へジョブを投げてレスポンスを返す。  
 実際の RSS 取得・記事保存は worker が非同期で行う。
 
 ### 2. SQS へのジョブ投入は2つのルート
@@ -70,12 +70,12 @@ modules/
 Internet
    │
    ▼
-[ALB] :80
+[ALB]
    │
-   ▼ (HTTP)
+   ▼
 [ECS Fargate - app]
-  ├─ nginx コンテナ :80 （リバースプロキシ）
-  └─ app コンテナ :9000 （PHP-FPM）
+  ├─ nginx コンテナ（リバースプロキシ）
+  └─ app コンテナ（PHP-FPM）
        ├─ [RDS MySQL]
        ├─ [ElastiCache Redis]
        └─ [SQS] ─── [ECS Fargate - worker]
@@ -92,7 +92,7 @@ Internet
 | ECS Fargate (app) | nginx + PHP-FPM。ALBからトラフィックを受ける |
 | ECS Fargate (worker) | SQSをポーリングしてジョブを処理 |
 | ECS Fargate (batch) | feeds:fetch を単発実行（EventBridgeからトリガー） |
-| ALB | HTTP :80 → ECS app へ転送 |
+| ALB | HTTP → ECS app へ転送 |
 | ECR (app / nginx) | コンテナイメージ保存 |
 | RDS MySQL | 記事・フィードデータ |
 | ElastiCache Redis | セッション・キャッシュ・queue:restart シグナル |
@@ -216,8 +216,8 @@ curl -X POST http://<alb-dns-name>/api/feeds \
 |---|---|
 | RDS MySQL | mysql コンテナ |
 | ElastiCache Redis | redis コンテナ |
-| SQS | localstack コンテナ（:4566） |
-| ALB | nginx コンテナ（:8080） |
+| SQS | localstack コンテナ |
+| ALB | nginx コンテナ |
 
 ### ローカルアーキテクチャ
 
@@ -226,21 +226,19 @@ curl -X POST http://<alb-dns-name>/api/feeds \
   ┌─────────────────────────────────────────────────────────┐
   │                                                         │
   │  [Client]                                               │
-  │     │ :8080                                             │
+  │     │                                                   │
   │     ▼                                                   │
   │  ┌─────────────────┐                                    │
-  │  │  nginx          │  :80 (内部)                        │
+  │  │  nginx          │（リバースプロキシ）                 │
   │  └─────────────────┘──────────────────┐                 │
   │                                       ▼                 │
   │  ┌─────────────────┐  MySQL    ┌─────────────────┐      │
   │  │  mysql          │◀──────────│  app            │      │
-  │  │  :3306          │  Redis    │                 │      │
   │  └─────────────────┘  ┌────────│                 │      │
   │                        │        └────────┬────────┘      │
   │  ┌─────────────────┐  │                │ SQS送信        │
   │  │  redis          │◀─┘        ┌────────▼────────┐      │
-  │  │  :6379          │           │  localstack     │      │
-  │  └─────────────────┘           │  :4566          │      │
+  │  └─────────────────┘           │  localstack     │      │
   │                                └────────┬────────┘      │
   │                                         │ SQSポーリング  │
   │  ┌─────────────────┐           ┌────────▼────────┐      │
