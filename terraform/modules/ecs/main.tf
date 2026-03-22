@@ -111,7 +111,8 @@ resource "aws_ecs_task_definition" "app" {
         { name = "DB_DATABASE", value = var.db_name },
         { name = "DB_USERNAME", value = var.db_username },
         { name = "REDIS_HOST", value = var.redis_host },
-        { name = "CACHE_DRIVER", value = "redis" },
+        { name = "CACHE_STORE", value = "redis" },
+        { name = "SESSION_DRIVER", value = "redis" },
         { name = "QUEUE_CONNECTION", value = "sqs" },
         { name = "SQS_PREFIX", value = var.sqs_prefix },
         { name = "SQS_QUEUE", value = var.sqs_queue },
@@ -138,7 +139,7 @@ resource "aws_ecs_task_definition" "app" {
       image     = "public.ecr.aws/datadog/agent:7"
       essential = false
       environment = [
-        { name = "DD_SITE",                        value = "datadoghq.com" },
+        { name = "DD_SITE",                        value = "ap1.datadoghq.com" },
         { name = "ECS_FARGATE",                    value = "true" },
         { name = "DD_APM_ENABLED",                 value = "true" },
         { name = "DD_DOGSTATSD_NON_LOCAL_TRAFFIC", value = "true" },
@@ -190,7 +191,8 @@ resource "aws_ecs_task_definition" "worker" {
         { name = "DB_DATABASE", value = var.db_name },
         { name = "DB_USERNAME", value = var.db_username },
         { name = "REDIS_HOST", value = var.redis_host },
-        { name = "CACHE_DRIVER", value = "redis" },
+        { name = "CACHE_STORE", value = "redis" },
+        { name = "SESSION_DRIVER", value = "redis" },
         { name = "QUEUE_CONNECTION", value = "sqs" },
         { name = "SQS_PREFIX", value = var.sqs_prefix },
         { name = "SQS_QUEUE", value = var.sqs_queue },
@@ -219,7 +221,7 @@ resource "aws_ecs_task_definition" "worker" {
       image     = "public.ecr.aws/datadog/agent:7"
       essential = false
       environment = [
-        { name = "DD_SITE",                        value = "datadoghq.com" },
+        { name = "DD_SITE",                        value = "ap1.datadoghq.com" },
         { name = "ECS_FARGATE",                    value = "true" },
         { name = "DD_APM_ENABLED",                 value = "true" },
         { name = "DD_DOGSTATSD_NON_LOCAL_TRAFFIC", value = "true" },
@@ -271,7 +273,8 @@ resource "aws_ecs_task_definition" "batch" {
         { name = "DB_DATABASE", value = var.db_name },
         { name = "DB_USERNAME", value = var.db_username },
         { name = "REDIS_HOST", value = var.redis_host },
-        { name = "CACHE_DRIVER", value = "redis" },
+        { name = "CACHE_STORE", value = "redis" },
+        { name = "SESSION_DRIVER", value = "redis" },
         { name = "QUEUE_CONNECTION", value = "sqs" },
         { name = "SQS_PREFIX", value = var.sqs_prefix },
         { name = "SQS_QUEUE", value = var.sqs_queue },
@@ -299,7 +302,7 @@ resource "aws_ecs_task_definition" "batch" {
       image     = "public.ecr.aws/datadog/agent:7"
       essential = false
       environment = [
-        { name = "DD_SITE",                        value = "datadoghq.com" },
+        { name = "DD_SITE",                        value = "ap1.datadoghq.com" },
         { name = "ECS_FARGATE",                    value = "true" },
         { name = "DD_APM_ENABLED",                 value = "true" },
         { name = "DD_DOGSTATSD_NON_LOCAL_TRAFFIC", value = "true" },

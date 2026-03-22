@@ -294,6 +294,26 @@ aws ecs describe-services \
 
 ---
 
+## Laravel 11以降の環境変数の変更点
+
+Laravel 11 から一部の設定キーが変わっており、旧来の変数名を設定しても無視される。
+
+| 設定 | Laravel 10以前 | Laravel 11以降 |
+|---|---|---|
+| キャッシュドライバー | `CACHE_DRIVER` | `CACHE_STORE` |
+| DB接続 | デフォルト `sqlite` のまま | 同様（要 `DB_CONNECTION=mysql` 明示） |
+
+セッションドライバーは `SESSION_DRIVER` のまま変わらないが、デフォルト値が `file` から `database` に変更されている。ECS環境では `SESSION_DRIVER=redis` を明示しないとセッションがDBに保存しようとして `sessions` テーブル不在エラーが起きる。
+
+```hcl
+# ECSタスク定義に必須の環境変数（Laravel 11以降）
+{ name = "DB_CONNECTION",   value = "mysql"  }
+{ name = "CACHE_STORE",     value = "redis"  }  # CACHE_DRIVER は無効
+{ name = "SESSION_DRIVER",  value = "redis"  }  # デフォルトがdatabaseになったため明示必要
+```
+
+---
+
 ## ECSコンテナのログをCloudWatchで見る
 
 Laravelのデフォルトログはファイル（`storage/logs/laravel.log`）に書き出されるため、ECSでは見えない。

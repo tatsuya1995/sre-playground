@@ -330,7 +330,7 @@ Datadog APM 上でサービスごとにトレースが分離して表示され�
 |---|---|---|
 | `DD_TRACE_CLI_ENABLED` | `true` | CLI（artisan コマンド）実行時のトレースを有効化 |
 
-### Dockerfile への ddtrace 追加 ✅ 実装済み
+### Dockerfile への ddtrace 追加 
 
 Terraform の環境変数（`DD_TRACE_LARAVEL_ENABLED` 等）は ddtrace PHP 拡張が存在する前提で動く。
 拡張がインストールされていなければ環境変数は無視され、トレースは送信されない。
