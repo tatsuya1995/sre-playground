@@ -84,23 +84,6 @@ Internet
 [EventBridge Scheduler] ─── 12時間ごと ───▶ [ECS Fargate - batch]
                                                   └─ php artisan feeds:fetch
 ```
-
-### AWS リソース一覧
-
-| リソース | 用途 |
-|---|---|
-| ECS Fargate (app) | nginx + PHP-FPM。ALBからトラフィックを受ける |
-| ECS Fargate (worker) | SQSをポーリングしてジョブを処理 |
-| ECS Fargate (batch) | feeds:fetch を単発実行（EventBridgeからトリガー） |
-| ALB | HTTP → ECS app へ転送 |
-| ECR (app / nginx) | コンテナイメージ保存 |
-| RDS MySQL | 記事・フィードデータ |
-| ElastiCache Redis | セッション・キャッシュ・queue:restart シグナル |
-| SQS | ジョブキュー（キュー名: `{project}-{env}-articles`） |
-| EventBridge Scheduler | 12時間ごとにbatchタスクを起動 |
-| Secrets Manager | DBパスワード・Datadog API Key の管理 |
-| NAT Gateway | プライベートサブネットからAWSサービスへの通信 |
-
 ---
 
 ## API エンドポイント
@@ -196,15 +179,6 @@ curl -X POST http://<alb-dns-name>/api/feeds \
 | body | longtext nullable | 記事本文（未実装） |
 | status | enum | pending / scraped / failed |
 | published_at | timestamp nullable | 記事公開日時 |
-
----
-
-## 対応 RSS フォーマット
-
-| フォーマット | リンク取得方法 |
-|---|---|
-| RSS 2.0 | `<link>` テキストノード |
-| Atom | `<link href="...">` 属性 |
 
 ---
 
@@ -340,38 +314,4 @@ aws ecs run-task \
   --network-configuration "awsvpcConfiguration={subnets=[<private_subnet_id>],securityGroups=[<app_sg_id>],assignPublicIp=DISABLED}" \
   --overrides '{"containerOverrides":[{"name":"app","command":["php","artisan","migrate","--force"]}]}' \
   --region ap-northeast-1
-```
-
----
-
-## ECS 運用上の注意点
-
-### SQS キュー名
-Terraform の SQS モジュールは `{project}-{env}-{queue_name}` 形式でキューを作成する。
-ECS の `SQS_QUEUE` 環境変数にはこの完全なキュー名が自動的に設定される。
-`envs/prod/main.tf` で `module.sqs.queue_name` を参照して渡している。
-
-### .env の注意
-ECS では IAM タスクロールで AWS 認証するため、`AWS_ACCESS_KEY_ID` や `SQS_ENDPOINT` は空にしておく。
-ローカル開発用の値が残っていると、ECS から誤った接続先へアクセスしようとして失敗する。
-
-```env
-# ECS環境では空にする（IAMタスクロールで認証）
-AWS_ACCESS_KEY_ID=
-AWS_SECRET_ACCESS_KEY=
-SQS_ENDPOINT=
-```
-
-### CloudWatch で Laravel ログを確認する
-ECS コンテナの stderr が CloudWatch に流れる。worker タスク定義に以下を設定済み。
-
-```
-LOG_CHANNEL=stderr
-```
-
-### Apple Silicon (ARM64) でのビルド
-ローカルが Apple Silicon の Mac の場合、ECS（AMD64）向けに `--platform linux/amd64` が必要。
-
-```bash
-docker build --platform linux/amd64 ...
 ```
