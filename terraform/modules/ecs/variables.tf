@@ -52,6 +52,10 @@ variable "db_password_secret_arn" {
   type = string
 }
 
+variable "datadog_api_key_secret_arn" {
+  type = string
+}
+
 variable "redis_host" {
   type = string
 }
