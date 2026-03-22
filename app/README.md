@@ -8,7 +8,7 @@ Laravel + ECS Fargate で構成され、SQS を介した非同期ジョブ処理
                                ↑
                EventBridge → ECS batch（定期実行）
 ```
-![alt text](infra-1.svg)
+![alt text](../terraform/infra.svg)
 > 構成図は `terraform/infra.drawio` に管理。`.mcp.json` で draw.io MCP サーバーが設定されており、Claude Code から図の作成・編集が可能。
 
 ---
