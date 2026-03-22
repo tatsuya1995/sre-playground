@@ -1,8 +1,225 @@
-# SRE Playground - Article Collection App
+## システム概要
 
-RSSフィードから記事を収集するアプリケーション。
+RSS フィードから記事を自動収集する **フィードアグリゲーター**。
+Laravel + ECS Fargate で構成され、SQS を介した非同期ジョブ処理と EventBridge による定期バッチ実行を組み合わせたサーバーレス志向のアーキテクチャ。
 
-## アーキテクチャ
+```
+ユーザー → ALB → ECS app → SQS → ECS worker → RDS (記事保存)
+                               ↑
+               EventBridge → ECS batch（定期実行）
+```
+![alt text](infra-1.svg)
+> 構成図は `terraform/infra.drawio` に管理。`.mcp.json` で draw.io MCP サーバーが設定されており、Claude Code から図の作成・編集が可能。
+
+---
+
+## アーキテクチャのポイント
+
+### 1. 非同期ジョブ処理（SQS + Worker）
+`POST /api/feeds` はフィードを DB に登録した直後に SQS へジョブを投げてレスポンスを返す。
+実際の RSS 取得・記事保存は worker が非同期で行う。
+
+### 2. SQS へのジョブ投入は2つのルート
+| トリガー | 処理 | 用途 |
+|---|---|---|
+| `POST /api/feeds` | app が即時 dispatch | 新規フィード登録時の初回取得 |
+| EventBridge（定期） | batch が全フィード分 dispatch | 既存フィードの定期更新 |
+
+どちらも同じ `FetchFeedJob` を使い、worker が処理する。
+
+### 3. ECS Fargate による役割分離
+| タスク | 常駐/単発 | 役割 |
+|---|---|---|
+| app | 常駐（ECS Service） | nginx + PHP-FPM。API リクエストを処理 |
+| worker | 常駐（ECS Service） | SQS をポーリングしてジョブを処理 |
+| batch | 単発（ECS Task） | EventBridge からトリガーされる feeds:fetch |
+
+### 4. Datadog APM によるオブザーバビリティ
+各 ECS タスクに **Datadog Agent サイドカー**を配置し、APM トレースとコンテナメトリクスを収集。
+
+### 5. Infrastructure as Code（Terraform）
+全 AWS リソースを Terraform で管理。モジュール構成：
+
+```
+modules/
+├── network      # VPC・サブネット・NAT Gateway
+├── sg           # セキュリティグループ
+├── alb          # ALB・ターゲットグループ
+├── ecs          # ECS クラスター・タスク定義・サービス
+├── rds          # RDS MySQL
+├── redis        # ElastiCache Redis
+├── sqs          # SQS キュー
+├── ecr          # コンテナイメージレジストリ
+├── eventbridge  # スケジューラー
+└── iam-github-actions  # GitHub Actions 用 OIDC 認証
+```
+
+### 6. GitHub Actions による CI/CD（OIDC 認証）
+長期クレデンシャル不要。GitHub Actions から AWS へは **OIDC** で一時認証し、ECR へのイメージ push と ECS サービス更新を自動化。
+
+### 7. セキュリティ設計
+- ECS タスクはすべて**プライベートサブネット**に配置
+- アウトバウンド通信は NAT Gateway 経由
+- DB パスワード・Datadog API Key は **Secrets Manager** で管理し、タスク起動時に注入
+
+---
+
+## AWS インフラ構成
+
+```
+Internet
+   │
+   ▼
+[ALB] :80
+   │
+   ▼ (HTTP)
+[ECS Fargate - app]
+  ├─ nginx コンテナ :80 （リバースプロキシ）
+  └─ app コンテナ :9000 （PHP-FPM）
+       ├─ [RDS MySQL]
+       ├─ [ElastiCache Redis]
+       └─ [SQS] ─── [ECS Fargate - worker]
+                          └─ php artisan queue:work sqs
+
+[EventBridge Scheduler] ─── 12時間ごと ───▶ [ECS Fargate - batch]
+                                                  └─ php artisan feeds:fetch
+```
+
+### AWS リソース一覧
+
+| リソース | 用途 |
+|---|---|
+| ECS Fargate (app) | nginx + PHP-FPM。ALBからトラフィックを受ける |
+| ECS Fargate (worker) | SQSをポーリングしてジョブを処理 |
+| ECS Fargate (batch) | feeds:fetch を単発実行（EventBridgeからトリガー） |
+| ALB | HTTP :80 → ECS app へ転送 |
+| ECR (app / nginx) | コンテナイメージ保存 |
+| RDS MySQL | 記事・フィードデータ |
+| ElastiCache Redis | セッション・キャッシュ・queue:restart シグナル |
+| SQS | ジョブキュー（キュー名: `{project}-{env}-articles`） |
+| EventBridge Scheduler | 12時間ごとにbatchタスクを起動 |
+| Secrets Manager | DBパスワード・Datadog API Key の管理 |
+| NAT Gateway | プライベートサブネットからAWSサービスへの通信 |
+
+---
+
+## API エンドポイント
+
+### フィード
+
+| メソッド | パス | 説明 |
+|---|---|---|
+| GET | `/api/feeds` | フィード一覧取得 |
+| POST | `/api/feeds` | フィード登録 & 記事取得ジョブ発行 |
+
+**POST /api/feeds リクエスト例**
+```bash
+# ローカル
+curl -X POST http://localhost:8080/api/feeds \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json" \
+  -d '{"name": "Qiita", "url": "https://qiita.com/popular-items/feed"}'
+
+# 本番（ALB経由）
+curl -X POST http://<alb-dns-name>/api/feeds \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json" \
+  -d '{"name": "Qiita", "url": "https://qiita.com/popular-items/feed"}'
+```
+
+**レスポンス例 (201)**
+```json
+{
+  "id": 1,
+  "name": "Qiita",
+  "url": "https://qiita.com/popular-items/feed",
+  "last_fetched_at": null,
+  "created_at": "2026-03-20T06:00:00.000000Z",
+  "updated_at": "2026-03-20T06:00:00.000000Z"
+}
+```
+
+### 記事
+
+| メソッド | パス | 説明 |
+|---|---|---|
+| GET | `/api/articles` | 記事一覧取得 (20件ページネーション) |
+| GET | `/api/articles/{id}` | 記事詳細取得 |
+
+---
+
+## データの流れ
+
+```
+1. POST /api/feeds
+   └─ FeedController::store()
+        ├─ feeds テーブルに登録
+        └─ FetchFeedJob を SQS に送信
+
+2. worker（常駐 ECS Service）
+   └─ php artisan queue:work sqs
+        └─ SQS をポーリング（3秒おき）
+             └─ FetchFeedJob::handle()
+                  ├─ フィード URL に HTTP GET（NAT Gateway 経由）
+                  ├─ RSS/Atom XML をパース
+                  ├─ 記事を articles テーブルに保存 (firstOrCreate)
+                  └─ feeds.last_fetched_at を更新
+
+3. EventBridge Scheduler（12時間ごと）
+   └─ ECS batch タスクを単発起動
+        └─ php artisan feeds:fetch
+             └─ 全フィードをループして FetchFeedJob を SQS に送信
+                  └─ 以降は 2. と同じ流れ
+```
+
+---
+
+## DB スキーマ
+
+### feeds
+
+| カラム | 型 | 説明 |
+|---|---|---|
+| id | bigint | PK |
+| name | string | フィード名 |
+| url | string (unique) | フィードURL |
+| last_fetched_at | timestamp nullable | 最終取得日時 |
+
+### articles
+
+| カラム | 型 | 説明 |
+|---|---|---|
+| id | bigint | PK |
+| feed_id | bigint (FK) | feeds.id |
+| url | string (unique) | 記事URL |
+| title | string nullable | 記事タイトル |
+| body | longtext nullable | 記事本文（未実装） |
+| status | enum | pending / scraped / failed |
+| published_at | timestamp nullable | 記事公開日時 |
+
+---
+
+## 対応 RSS フォーマット
+
+| フォーマット | リンク取得方法 |
+|---|---|
+| RSS 2.0 | `<link>` テキストノード |
+| Atom | `<link href="...">` 属性 |
+
+---
+
+## ローカル開発環境
+
+ローカルでは Docker Compose を使い、AWS サービスを以下のように差し替える。
+
+| 本番 (AWS) | ローカル (Docker) |
+|---|---|
+| RDS MySQL | mysql コンテナ |
+| ElastiCache Redis | redis コンテナ |
+| SQS | localstack コンテナ（:4566） |
+| ALB | nginx コンテナ（:8080） |
+
+### ローカルアーキテクチャ
 
 ```
                         Docker Network
@@ -43,102 +260,7 @@ app   ──depends_on──▶ mysql (healthy)
 worker──depends_on──▶ app
 ```
 
-## サービス構成
-
-| サービス | イメージ | 役割 |
-|---|---|---|
-| app | PHP-FPM | Laravel API サーバー |
-| worker | PHP-FPM | SQS キューワーカー |
-| nginx | nginx | リバースプロキシ (:8080) |
-| mysql | mysql | データベース |
-| redis | redis | セッション・キャッシュ |
-| localstack | localstack | AWS SQS エミュレーター |
-
-## API エンドポイント
-
-### フィード
-
-| メソッド | パス | 説明 |
-|---|---|---|
-| GET | `/api/feeds` | フィード一覧取得 |
-| POST | `/api/feeds` | フィード登録 & 記事取得ジョブ発行 |
-
-**POST /api/feeds リクエスト例**
-```bash
-curl -X POST http://localhost:8080/api/feeds \
-  -H "Content-Type: application/json" \
-  -H "Accept: application/json" \
-  -d '{"name": "Qiita", "url": "https://qiita.com/popular-items/feed"}'
-```
-
-**レスポンス例 (201)**
-```json
-{
-  "id": 1,
-  "name": "Qiita",
-  "url": "https://qiita.com/popular-items/feed",
-  "last_fetched_at": null,
-  "created_at": "2026-03-20T06:00:00.000000Z",
-  "updated_at": "2026-03-20T06:00:00.000000Z"
-}
-```
-
-### 記事
-
-| メソッド | パス | 説明 |
-|---|---|---|
-| GET | `/api/articles` | 記事一覧取得 (20件ページネーション) |
-| GET | `/api/articles/{id}` | 記事詳細取得 |
-
-## データの流れ
-
-```
-1. POST /api/feeds
-   └─ FeedController::store()
-        ├─ feeds テーブルに登録
-        └─ FetchFeedJob を SQS に送信
-
-2. worker コンテナ（常駐）
-   └─ php artisan queue:work sqs
-        └─ SQS をポーリング（3秒おき）
-             └─ FetchFeedJob::handle()
-                  ├─ フィード URL に HTTP GET
-                  ├─ RSS/Atom XML をパース
-                  ├─ 記事を articles テーブルに保存 (firstOrCreate)
-                  └─ feeds.last_fetched_at を更新
-
-3. php artisan feeds:fetch（バッチ実行）
-   └─ FetchFeedsCommand::handle()
-        └─ 全フィードをループして FetchFeedJob を SQS に送信
-             └─ 以降は 2. と同じ流れ
-```
-
-本番では EventBridge（cron）が `php artisan feeds:fetch` をトリガーし、ECS タスクとして起動する。
-
-## DB スキーマ
-
-### feeds
-
-| カラム | 型 | 説明 |
-|---|---|---|
-| id | bigint | PK |
-| name | string | フィード名 |
-| url | string (unique) | フィードURL |
-| last_fetched_at | timestamp nullable | 最終取得日時 |
-
-### articles
-
-| カラム | 型 | 説明 |
-|---|---|---|
-| id | bigint | PK |
-| feed_id | bigint (FK) | feeds.id |
-| url | string (unique) | 記事URL |
-| title | string nullable | 記事タイトル |
-| body | longtext nullable | 記事本文（未実装） |
-| status | enum | pending / scraped / failed |
-| published_at | timestamp nullable | 記事公開日時 |
-
-## ローカル起動手順
+### 起動手順
 
 ```bash
 # .env を用意
@@ -151,14 +273,11 @@ docker-compose up -d
 docker-compose exec app php artisan migrate
 ```
 
-## キュー
+### キューの確認（localstack）
 
-- **接続**: SQS (localstack)
 - **キュー名**: `articles`
 - **DLQ**: `articles-dlq`（3回失敗でデッドレターキューへ）
 - **リトライ**: 最大3回 (`FetchFeedJob::$tries = 3`)
-
-### キューの確認コマンド
 
 ```bash
 # キュー一覧
@@ -180,55 +299,9 @@ docker-compose exec localstack awslocal sqs get-queue-attributes \
 | `ApproximateNumberOfMessages` | 未処理のメッセージ数 |
 | `ApproximateNumberOfMessagesNotVisible` | Worker が処理中のメッセージ数 |
 
-## 対応 RSS フォーマット
-
-| フォーマット | リンク取得方法 |
-|---|---|
-| RSS 2.0 | `<link>` テキストノード |
-| Atom | `<link href="...">` 属性 |
-
 ---
 
-## AWS インフラ構成
-
-```
-Internet
-   │
-   ▼
-[ALB] :80
-   │
-   ▼ (HTTP)
-[ECS Fargate - app]
-  ├─ nginx コンテナ :80 （リバースプロキシ）
-  └─ app コンテナ :9000 （PHP-FPM）
-       ├─ [RDS MySQL]
-       ├─ [ElastiCache Redis]
-       └─ [SQS] ─── [ECS Fargate - worker]
-                          └─ php artisan queue:work sqs
-
-[EventBridge Scheduler] ─── 12時間ごと ───▶ [ECS Fargate - batch]
-                                                  └─ php artisan feeds:fetch
-```
-
-### AWSリソース一覧
-
-| リソース | 用途 |
-|---|---|
-| ECS Fargate (app) | nginx + PHP-FPM。ALBからトラフィックを受ける |
-| ECS Fargate (worker) | SQSをポーリングしてジョブを処理 |
-| ECS Fargate (batch) | feeds:fetch を単発実行（EventBridgeからトリガー） |
-| ALB | HTTP :80 → ECS app へ転送 |
-| ECR (app / nginx) | コンテナイメージ保存 |
-| RDS MySQL | 記事・フィードデータ |
-| ElastiCache Redis | セッション・キャッシュ |
-| SQS | ジョブキュー（キュー名: `{project}-{env}-articles`） |
-| EventBridge Scheduler | 12時間ごとにbatchタスクを起動 |
-| Secrets Manager | DBパスワード管理 |
-| NAT Gateway | プライベートサブネットからAWSサービスへの通信 |
-
----
-
-## ECRへのイメージpush手順
+## ECRへのイメージ push 手順
 
 ```bash
 # ECRにログイン
@@ -259,7 +332,7 @@ aws ecs update-service \
 
 ---
 
-## ECSでマイグレーションを実行
+## ECS でマイグレーションを実行
 
 ```bash
 aws ecs run-task \
@@ -273,33 +346,33 @@ aws ecs run-task \
 
 ---
 
-## ECS運用上の注意点
+## ECS 運用上の注意点
 
-### SQSキュー名
-TerraformのSQSモジュールは `{project}-{env}-{queue_name}` 形式でキューを作成する。
-ECSの `SQS_QUEUE` 環境変数にはこの完全なキュー名が自動的に設定される。
+### SQS キュー名
+Terraform の SQS モジュールは `{project}-{env}-{queue_name}` 形式でキューを作成する。
+ECS の `SQS_QUEUE` 環境変数にはこの完全なキュー名が自動的に設定される。
 `envs/prod/main.tf` で `module.sqs.queue_name` を参照して渡している。
 
-### .envの注意
-`.env` に `SQS_ENDPOINT` や `AWS_ACCESS_KEY_ID=test` が残っていると、ECSでlocalstackに接続しようとして失敗する。
-ECSではIAMタスクロールで認証するため、これらは空にしておく。
+### .env の注意
+ECS では IAM タスクロールで AWS 認証するため、`AWS_ACCESS_KEY_ID` や `SQS_ENDPOINT` は空にしておく。
+ローカル開発用の値が残っていると、ECS から誤った接続先へアクセスしようとして失敗する。
 
 ```env
-# ECS環境では空にする
+# ECS環境では空にする（IAMタスクロールで認証）
 AWS_ACCESS_KEY_ID=
 AWS_SECRET_ACCESS_KEY=
 SQS_ENDPOINT=
 ```
 
-### CloudWatchでLaravelログを確認する
-ECSコンテナのstderrがCloudWatchに流れる。Laravelのログを見るにはworkerタスク定義に以下を追加。
+### CloudWatch で Laravel ログを確認する
+ECS コンテナの stderr が CloudWatch に流れる。worker タスク定義に以下を設定済み。
 
 ```
 LOG_CHANNEL=stderr
 ```
 
 ### Apple Silicon (ARM64) でのビルド
-ローカルがApple SiliconのMacの場合、ECS（AMD64）向けに `--platform linux/amd64` が必要。
+ローカルが Apple Silicon の Mac の場合、ECS（AMD64）向けに `--platform linux/amd64` が必要。
 
 ```bash
 docker build --platform linux/amd64 ...
